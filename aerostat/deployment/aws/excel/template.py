@@ -1,11 +1,69 @@
-import importlib
 import io
 import re
 import uuid
 import xml.etree.ElementTree as ET
-from importlib.abc import Traversable
 from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
+
+
+def create_template(
+    excel_template_path: str,
+    column_names: list[str],
+    api_endpoint,
+    table_name="INPUT_TABLE",
+) -> bytes:
+    """Main function for modifying table columns in the openXML (.xlsx) file.
+    Returns the updated openXML file content as binary.
+
+    :param excel_template_path: path to the openXML (.xlsx) file
+    :param column_names: list of new column names
+    :param api_endpoint: endpoint for the API
+    :param table_name: name of the table in the openXML file
+    """
+
+    with ZipFile(excel_template_path, "r") as template_file:
+        files = {file: template_file.read(file) for file in template_file.namelist()}
+
+    # find xml file for the table
+    table_filename = [
+        file
+        for file, file_content in files.items()
+        if file.endswith(".xml") and table_name.encode("utf-8") in file_content
+    ][0]
+    # update table file
+    files[table_filename], original_column_names = _update_table_file(
+        files[table_filename], column_names
+    )
+
+    # update column names in shared strings file
+    shared_strings_file = [
+        file for file, file_content in files.items() if "sharedStrings.xml" in file
+    ][0]
+    files[shared_strings_file], column_ids, id_mapping = _update_shared_string_file(
+        files[shared_strings_file],
+        original_column_names=original_column_names,
+        new_column_names=column_names,
+        api_endpoint=api_endpoint,
+    )
+
+    # update column names in shared strings file
+    sheet_files = [
+        file
+        for file, file_content in files.items()
+        if re.search(r"sheet\d{1,2}.xml$", file)
+    ]
+    for sheet_file in sheet_files:
+        files[sheet_file] = _update_sheet_file(
+            files[sheet_file], column_ids, id_mapping
+        )
+
+    output = io.BytesIO()
+    with ZipFile(output, "w", compression=ZIP_DEFLATED) as output_file:
+        for file, file_content in files.items():
+            output_file.writestr(file, file_content)
+
+    return output.getvalue()
+
 
 XML_DECLARATION = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 
@@ -170,63 +228,9 @@ def _update_sheet_file(
     return XML_DECLARATION + ET.tostring(sheet_root)
 
 
-def update_excel(
-    openXML_file_path: str,
-    column_names: list[str],
-    api_endpoint,
-    table_name="INPUT_TABLE",
-) -> bytes:
-    """Main function for modifying table columns in the openXML file.
-    Returns the updated openXML file content as binary.
-    """
-
-    with ZipFile(openXML_file_path, "r") as template_file:
-        files = {file: template_file.read(file) for file in template_file.namelist()}
-
-    # find xml file for the table
-    table_filename = [
-        file
-        for file, file_content in files.items()
-        if file.endswith(".xml") and table_name.encode("utf-8") in file_content
-    ][0]
-    # update table file
-    files[table_filename], original_column_names = _update_table_file(
-        files[table_filename], column_names
-    )
-
-    # update column names in shared strings file
-    shared_strings_file = [
-        file for file, file_content in files.items() if "sharedStrings.xml" in file
-    ][0]
-    files[shared_strings_file], column_ids, id_mapping = _update_shared_string_file(
-        files[shared_strings_file],
-        original_column_names=original_column_names,
-        new_column_names=column_names,
-        api_endpoint=api_endpoint,
-    )
-
-    # update column names in shared strings file
-    sheet_files = [
-        file
-        for file, file_content in files.items()
-        if re.search(r"sheet\d{1,2}.xml$", file)
-    ]
-    for sheet_file in sheet_files:
-        files[sheet_file] = _update_sheet_file(
-            files[sheet_file], column_ids, id_mapping
-        )
-
-    output = io.BytesIO()
-    with ZipFile(output, "w", compression=ZIP_DEFLATED) as output_file:
-        for file, file_content in files.items():
-            output_file.writestr(file, file_content)
-
-    return output.getvalue()
-
-
 if __name__ == "__main__":
-    update_excel(
-        openXML_file_path="/Users/vincentyan/PycharmProjects/Aerostat/aerostat/static/template.xlsm",
+    create_template(
+        excel_template_path="./template_base.xlsm",
         column_names=["a", "b", "c"],
         api_endpoint="http://localhost:5000",
     )

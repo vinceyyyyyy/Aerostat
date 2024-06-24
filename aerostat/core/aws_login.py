@@ -48,7 +48,3 @@ def prompted_create_aws_profile():
     aws_secret_access_key = typer.prompt("AWS Secret Access Key")
     create_aws_profile(profile_name, aws_access_key_id, aws_secret_access_key)
     return profile_name
-
-
-if __name__ == "__main__":
-    print(get_aws_profiles())

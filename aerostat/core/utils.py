@@ -1,27 +1,15 @@
 import os
-import platform
-import subprocess
+import tempfile
+from datetime import datetime
 from importlib import import_module, resources
 from importlib.abc import Traversable
 
-
-def run_serverless_command(command: str, cwd: str, env: dict = None):
-    """Run a Serverless Framework command."""
-    subprocess.run(
-        f"serverless {command} --aws-profile aerostat",
-        shell=True,
-        check=True,
-        cwd=cwd,
-        env=env,
-    )
+import jinja2
 
 
-def get_local_aerostat_folder():
-    """Initialize the local storage directory at ~/.aerostat"""
-    aerostat_dir = os.path.join(os.path.expanduser("~"), ".aerostat")
-    if not os.path.exists(aerostat_dir):
-        os.makedirs(aerostat_dir)
-    return aerostat_dir
+def create_tmp_dir():
+    """Create a system tmp directory for temporary files"""
+    return tempfile.TemporaryDirectory()
 
 
 def find_static_resource_path(module: str, filename: str = "") -> Traversable:
@@ -37,24 +25,12 @@ def sanitize_service_name(service_name: str):
     return service_name.lower().replace(" ", "-").replace("_", "-")
 
 
-def list_deployments():
-    """List deployments from local storage"""
-    local_storage = get_local_aerostat_folder()
-    return [
-        n
-        for n in os.listdir(local_storage)
-        if os.path.isdir(os.path.join(local_storage, n))
-    ]
-
-
-def get_deployment_info(project_name: str):
-    """Get deployment info from local storage"""
-    local_storage = get_local_aerostat_folder()
-    project_dir = os.path.join(local_storage, project_name)
-    if not os.path.exists(project_dir):
-        raise Exception("Deployment info not found. Please deploy first.")
-
-    return run_serverless_command("info", cwd=project_dir)
+def get_system_dependencies(python_dependencies: list[str]) -> list[str]:
+    """get system dependencies from certain known ML libraries"""
+    system_dependencies = []
+    if "lightgbm" in [s.lower() for s in python_dependencies]:
+        system_dependencies.append("libgomp1")
+    return system_dependencies
 
 
 def get_module_version() -> str:
@@ -62,15 +38,29 @@ def get_module_version() -> str:
     return import_module("aerostat").__version__
 
 
-class OS:
-    @staticmethod
-    def is_windows():
-        return platform.system() == "Windows"
+def render_html(
+    project_name: str,
+    input_columns: list[str],
+    python_dependencies: list[str],
+    save_to: str = None,
+):
+    environment = jinja2.Environment()
+    template = environment.from_string(
+        find_static_resource_path("aerostat.static", "index.jinja").read_text(
+            encoding="utf-8"
+        )
+    )
+    result = template.render(
+        project_name=project_name,
+        build_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        input_columns=input_columns,
+        python_dependencies=python_dependencies,
+        aerostat_version=get_module_version(),
+    )
 
-    @staticmethod
-    def is_mac():
-        return platform.system() == "Darwin"
+    if save_to:
+        os.makedirs(os.path.dirname(save_to), exist_ok=True)
+        with open(save_to, "w") as f:
+            f.write(result)
 
-    @staticmethod
-    def is_linux():
-        return platform.system() == "Linux"
+    return result
